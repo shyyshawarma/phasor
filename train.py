@@ -1,6 +1,7 @@
 from __future__ import print_function
 import argparse
 import os
+# import torch
 from math import log10
 import torch
 import torch.nn as nn
@@ -18,7 +19,9 @@ from model_with_eca import Restormer
 import kornia
 
 
+# ===============================
 # Training settings
+# ===============================
 parser = argparse.ArgumentParser(description='Phaseformer')
 parser.add_argument('--dataset', required=False, default='./uw_data/', help='dataset folder')
 parser.add_argument('--batch_size', type=int, default=1, help='training batch size')
@@ -40,32 +43,23 @@ opt = parser.parse_args()
 print(opt)
 
 
-
-
-# Custom dataset class to load images from multiple directories
+# ===============================
+# Custom Dataset
+# ===============================
 class CustomImageDataset(torch.utils.data.Dataset):
     def __init__(self, input_dirs, reference_dirs, transform=None, transformH=None):
-        """
-        Args:
-            input_dirs (list): List of directories containing input images.
-            reference_dirs (list): List of directories containing reference images.
-            transform (callable, optional): Optional transform to be applied to input images.
-            reference_transform (callable, optional): Optional transform to be applied to reference images.
-        """
         self.input_dirs = input_dirs
         self.reference_dirs = reference_dirs
         self.transform = transform
-        self.transformH =transformH
+        self.transformH = transformH
         valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
 
-        # Gather image paths from multiple directories
         self.input_images = []
         self.reference_images = []
         for input_dir, reference_dir in zip(input_dirs, reference_dirs):
             input_files = sorted([f for f in os.listdir(input_dir) if f.lower().endswith(valid_extensions)])
             reference_files = sorted([f for f in os.listdir(reference_dir) if f.lower().endswith(valid_extensions)])
            
-            # Ensure filenames match, skip if not
             for file in input_files:
                 if file in reference_files:
                     self.input_images.append(os.path.join(input_dir, file))
@@ -75,50 +69,42 @@ class CustomImageDataset(torch.utils.data.Dataset):
         return len(self.input_images)
 
     def __getitem__(self, idx):
-        # Load images and apply transformations
-
         input_image = Image.open(self.input_images[idx]).convert("RGB")
         reference_image = Image.open(self.reference_images[idx]).convert("RGB")
 
         input_image = self.transform(input_image)
-
         reference_imageL = self.transform(reference_image)
-
         reference_imageH = self.transformH(reference_image)  
 
-        return input_image, reference_imageL,reference_imageH, idx
+        return input_image, reference_imageL, reference_imageH, idx
 
 
-
-# Data loading functions for multiple directories
+# ===============================
+# Data loading
+# ===============================
 def get_dataset(root_dirs):
-    """
-    Args:
-        root_dirs (dict): Dictionary containing dataset folder paths with 'input' and 'reference' keys.
-                          Example: {'input': ['/path/to/uw_data', '/path/to/LUSI'], 
-                                    'reference': ['/path/to/ref_data1', '/path/to/ref_data2']}
-    """
     transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
     transformH = transforms.Compose([
-        transforms.Resize((256*2, 256*2)),
+        transforms.Resize((512, 512)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
     input_dirs = root_dirs['input']
     reference_dirs = root_dirs['reference']
-    return CustomImageDataset(input_dirs, reference_dirs, transform,transformH )
-
+    return CustomImageDataset(input_dirs, reference_dirs, transform, transformH)
 
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-
+# ===============================
+# Initialization
+# ===============================
 if opt.cuda and not torch.cuda.is_available():
     raise Exception("No GPU found, please run without --cuda")
 
@@ -130,8 +116,13 @@ if opt.cuda:
 device = torch.device("cuda:0" if opt.cuda else "cpu")
 
 if opt.finetune:
+    
+
     G_path = '/kaggle/working/phasor/netG_model_epoch_17_psnr_27.2090.pth'
-    net_g = torch.load(G_path).to(device)
+
+# Use weights_only=False explicitly
+    net_g = torch.load(G_path, weights_only=False).to(device)
+
 else:
     net_g = Restormer().to(device)
 
@@ -140,108 +131,91 @@ print(f'Trainable parameters: {count_parameters(net_g)}')
 print('===> Loading datasets')
 
 root_dirs_train = {
-    'input': [ './uw_data/train/a'],      
-    'reference': [ './uw_data/train/b']
+    'input': ['./uw_data/train/a'],      
+    'reference': ['./uw_data/train/b']
 }
-
 dataset_train = get_dataset(root_dirs_train)
-
 data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=1, shuffle=True)
-print(len(data_loader_train ))
+print(len(data_loader_train))
 
 root_dirs_test = {
     'input': ['./uw_data/test/a'],
     'reference': ['./uw_data/test/b']
 }
 dataset_test = get_dataset(root_dirs_test)
-
 data_loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=1, shuffle=True)
 
 print('===> Building models')
 
 
+# ===============================
+# Loss Functions
+# ===============================
 class Gradient_Loss(nn.Module):
     def __init__(self):
         super(Gradient_Loss, self).__init__()
-
         kernel_g = [[[0,1,0],[1,-4,1],[0,1,0]],
                     [[0,1,0],[1,-4,1],[0,1,0]],
                     [[0,1,0],[1,-4,1],[0,1,0]]]
         kernel_g = torch.FloatTensor(kernel_g).unsqueeze(0).permute(1, 0, 2, 3)
         self.weight_g = nn.Parameter(data=kernel_g, requires_grad=False)
 
-    def forward(self, x,xx):
-        grad = 0
-        y = x
-        yy = xx
-        gradient_x = F.conv2d(y, self.weight_g,groups=3)
-        gradient_xx = F.conv2d(yy,self.weight_g,groups=3)
+    def forward(self, x, xx):
+        gradient_x = F.conv2d(x, self.weight_g, groups=3)
+        gradient_xx = F.conv2d(xx, self.weight_g, groups=3)
         l = nn.L1Loss()
-        a = l(gradient_x,gradient_xx)
-        grad = grad + a
-        return grad
+        return l(gradient_x, gradient_xx)
 
-class CharbonnierLoss(nn.Module):
-    """Charbonnier Loss (L1)"""
-
-    def __init__(self, loss_weight=1.0, reduction='mean', eps=1e-3):
-        super(CharbonnierLoss, self).__init__()
-        self.eps = eps
-
-    def forward(self, x, y):
-        diff = x - y
-        # loss = torch.sum(torch.sqrt(diff * diff + self.eps))
-        loss = torch.mean(torch.sqrt((diff * diff) + (self.eps*self.eps)))
-        return loss 
 
 class WeightedLoss(nn.Module):
-     """ Weighted Loss for upsampled and downsampled images loss"""
+    def __init__(self, num_weights):
+        super(WeightedLoss, self).__init__()
+        self.num_weights = num_weights
+        self.weights = nn.Parameter(torch.rand(1, num_weights))
+        self.softmax_l = nn.Softmax(dim=1)
 
-     def __init__(self, num_weights):
-         super(WeightedLoss, self).__init__()
-         self.num_weights = num_weights
-         self.weights = nn.Parameter(torch.rand(1, num_weights))
-         self.softmax_l = nn.Softmax(dim=1)
-
-     def forward(self, *argv):
-         loss = 0
-         weights = self.softmax_l(self.weights)
-         for idx,arg in enumerate(argv):
-            loss += arg*weights[0, idx]
-         return loss  
+    def forward(self, *argv):
+        loss = 0
+        weights = self.softmax_l(self.weights)
+        for idx, arg in enumerate(argv):
+            loss += arg * weights[0, idx]
+        return loss
 
 
-# Define dynmaic weights for losses
-N=4 #number of losses
-Weighted_Loss4 = WeightedLoss(N).to(device)  
-Weighted_Loss2= WeightedLoss(2).to(device)
-
-
-# Define losses
+# Initialize loss functions
+Weighted_Loss4 = WeightedLoss(4).to(device)
+Weighted_Loss2 = WeightedLoss(2).to(device)
 Gradient_Loss = Gradient_Loss().to(device)
 L_per = VGGPerceptualLoss().to(device)
 MS_SSIM_loss = MS_SSIM(win_size=11, win_sigma=1.5, data_range=1, size_average=True, channel=3).to(device)
 Charbonnier_loss = nn.SmoothL1Loss().to(device)
 
 
-
-
+# ===============================
+# Optimizer & Scheduler
+# ===============================
 optimizer_g = optim.Adam(net_g.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 net_g_scheduler = get_scheduler(optimizer_g, opt)
 
+
+# ===============================
+# Training Loop
+# ===============================
 output_dir_train = './images_train'
-if not os.path.exists(output_dir_train):
-    os.makedirs(output_dir_train)
+os.makedirs(output_dir_train, exist_ok=True)
+
 for epoch in range(opt.epoch_count, opt.niter + opt.niter_decay + 1):
     net_g.train()
-    for iteration, batch in enumerate(data_loader_train , 1):
-        rgb, tarL,tarH,indx = batch[0].to(device), batch[1].to(device), batch[2].to(device), batch[3]
-        fake_b,fake_b1 = net_g(rgb)
+    for iteration, batch in enumerate(data_loader_train, 1):
+        rgb, tarL, tarH, indx = batch[0].to(device), batch[1].to(device), batch[2].to(device), batch[3]
+        fake_b, fake_b1 = net_g(rgb)
         optimizer_g.zero_grad()
 
-        loss_g_L= Weighted_Loss4(Charbonnier_loss(tarL,fake_b),L_per(fake_b,tarL), Gradient_Loss(fake_b,tarL),MS_SSIM_loss(fake_b,tarL))
-        loss_g_H= Weighted_Loss4(Charbonnier_loss(tarH,fake_b1),L_per(fake_b1,tarH), Gradient_Loss(fake_b1,tarH),MS_SSIM_loss(fake_b1,tarH))
-        loss_g =  Weighted_Loss2(loss_g_L,loss_g_H)
+        loss_g_L = Weighted_Loss4(Charbonnier_loss(tarL, fake_b), L_per(fake_b, tarL),
+                                  Gradient_Loss(fake_b, tarL), MS_SSIM_loss(fake_b, tarL))
+        loss_g_H = Weighted_Loss4(Charbonnier_loss(tarH, fake_b1), L_per(fake_b1, tarH),
+                                  Gradient_Loss(fake_b1, tarH), MS_SSIM_loss(fake_b1, tarH))
+        loss_g = Weighted_Loss2(loss_g_L, loss_g_H)
         
         loss_g.backward()
         optimizer_g.step()
@@ -253,27 +227,39 @@ for epoch in range(opt.epoch_count, opt.niter + opt.niter_decay + 1):
 
     update_learning_rate(net_g_scheduler, optimizer_g)
 
-
-    # Ensure output directory exists
+    # ===============================
+    # Evaluation Loop
+    # ===============================
     output_dir = './images_test'
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
+    os.makedirs(output_dir, exist_ok=True)
 
     net_g.eval()
+    total_psnr = 0.0
+    count = 0
 
-    for test_iter, batch in enumerate(data_loader_test, 1):
-        rgb_input, target, targetH, idx = batch[0].to(device), batch[1].to(device), batch[2].to(device), batch[3]
-        prediction = net_g(rgb_input)[0]
-        out = torch.cat((rgb_input, prediction, target), 3)
-       
-        filename = f'{output_dir}/{idx[0]}.png'  # Append the .png extension
-        save_img(out[0].detach().cpu(), filename)
+    with torch.no_grad():
+        for test_iter, batch in enumerate(data_loader_test, 1):
+            rgb_input, target, targetH, idx = batch[0].to(device), batch[1].to(device), batch[2].to(device), batch[3]
+            prediction = net_g(rgb_input)[0]
 
-    net_g_model_out_path = f"checkpoint/{opt.dataset}/netG_model_epoch_{epoch}_psnr_{avg_psnr:.4f}.pth"
-    if not os.path.exists("checkpoint"):
-        os.mkdir("checkpoint")
-    if not os.path.exists(os.path.join("checkpoint", opt.dataset)):
-        os.mkdir(os.path.join("checkpoint", opt.dataset))
+            # Compute PSNR
+            psnr_val = torchPSNR(prediction.clamp(0, 1), target.clamp(0, 1))
+            total_psnr += psnr_val
+            count += 1
+
+            out = torch.cat((rgb_input, prediction, target), 3)
+            filename = f'{output_dir}/{idx[0]}.png'
+            save_img(out[0].detach().cpu(), filename)
+
+    avg_psnr = total_psnr / count
+    print(f"===> Epoch {epoch} Average PSNR: {avg_psnr:.4f} dB")
+
+    # ===============================
+    # Save Model Checkpoint
+    # ===============================
+    checkpoint_dir = os.path.join("checkpoint", opt.dataset)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    net_g_model_out_path = os.path.join(checkpoint_dir, f"netG_model_epoch_{epoch}_psnr_{avg_psnr:.4f}.pth")
     torch.save(net_g, net_g_model_out_path)
     print(f"Checkpoint saved at {net_g_model_out_path}")
