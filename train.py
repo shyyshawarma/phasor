@@ -1,7 +1,6 @@
 from __future__ import print_function
 import argparse
 import os
-# import torch
 from math import log10
 import torch
 import torch.nn as nn
@@ -116,13 +115,8 @@ if opt.cuda:
 device = torch.device("cuda:0" if opt.cuda else "cpu")
 
 if opt.finetune:
-    
-
-    G_path = '/kaggle/working/phasor/netG_model_epoch_17_psnr_27.2090.pth'
-
-# Use weights_only=False explicitly
-    net_g = torch.load(G_path, weights_only=False).to(device)
-
+    G_path = 'Provide the path to the checkpoint you wish to continue from'
+    net_g = torch.load(G_path).to(device)
 else:
     net_g = Restormer().to(device)
 
