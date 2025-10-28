@@ -681,7 +681,14 @@ root_dirs_train = {
     'reference': ['./uw_data/train/b']
 }
 dataset_train = get_dataset(root_dirs_train)
-data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=1, shuffle=True)
+data_loader_train = torch.utils.data.DataLoader(
+    dataset_train,
+    batch_size=opt.batch_size,
+    shuffle=True,
+    num_workers=opt.threads
+)
+
+
 print(f"Train samples: {len(data_loader_train)}")
 
 root_dirs_test = {
@@ -689,7 +696,13 @@ root_dirs_test = {
     'reference': ['./uw_data/test/b']
 }
 dataset_test = get_dataset(root_dirs_test)
-data_loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=1, shuffle=True)
+data_loader_test = torch.utils.data.DataLoader(
+    dataset_test,
+    batch_size=opt.test_batch_size,
+    shuffle=False,
+    num_workers=opt.threads
+)
+
 print(f"Test samples: {len(data_loader_test)}")
 
 
@@ -805,6 +818,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         'avg_psnr': avg_psnr,
     }, checkpoint_path)
     print(f"Checkpoint saved at {checkpoint_path}")
+
 
 
 
