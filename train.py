@@ -738,7 +738,7 @@ Charbonnier_loss = nn.SmoothL1Loss().to(device)
 # ===============================
 # Training Loop
 # ===============================
-output_dir_train = './images_train'
+output_dir_train = '/kaggle/working/phasor/images_train'
 os.makedirs(output_dir_train, exist_ok=True)
 
 checkpoint_dir = os.path.join("checkpoint", opt.dataset)
@@ -805,6 +805,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         'avg_psnr': avg_psnr,
     }, checkpoint_path)
     print(f"Checkpoint saved at {checkpoint_path}")
+
 
 
 
