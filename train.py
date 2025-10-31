@@ -783,7 +783,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
     # ===============================
     # Evaluation Loop
     # ===============================
-    output_dir = './images_test'
+    output_dir = '/kaggle/working/phasor/images_test'
     os.makedirs(output_dir, exist_ok=True)
 
     net_g.eval()
@@ -818,6 +818,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         'avg_psnr': avg_psnr,
     }, checkpoint_path)
     print(f"Checkpoint saved at {checkpoint_path}")
+
 
 
 
